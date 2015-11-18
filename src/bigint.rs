@@ -1230,16 +1230,21 @@ impl ToPrimitive for BigUint {
         })
     }
 
-    // `DoubleBigDigit` size dependent
     #[inline]
     fn to_u64(&self) -> Option<u64> {
-        match self.data.len() {
-            0 => Some(0),
-            1 => Some(self.data[0] as u64),
-            2 => Some(big_digit::to_doublebigdigit(self.data[1], self.data[0])
-                      as u64),
-            _ => None
+        let mut ret: u64 = 0;
+        let mut bits = 0;
+
+        for i in self.data.iter() {
+            if bits >= 64 {
+                return None;
+            }
+
+            ret += (*i as u64) << bits;
+            bits += big_digit::BITS;
         }
+
+        Some(ret)
     }
 }
 
@@ -1255,15 +1260,16 @@ impl FromPrimitive for BigUint {
         }
     }
 
-    // `DoubleBigDigit` size dependent
     #[inline]
-    fn from_u64(n: u64) -> Option<BigUint> {
-        let n = match big_digit::from_doublebigdigit(n) {
-            (0,  0)  => Zero::zero(),
-            (0,  n0) => BigUint::new(vec!(n0)),
-            (n1, n0) => BigUint::new(vec!(n0, n1))
-        };
-        Some(n)
+    fn from_u64(mut n: u64) -> Option<BigUint> {
+        let mut ret: BigUint = Zero::zero();
+
+        while n != 0 {
+            ret.data.push(n as BigDigit);
+            n = (n >> 1) >> (big_digit::BITS - 1);
+        }
+
+        Some(ret)
     }
 }
 
@@ -1500,9 +1506,8 @@ impl BigUint {
     }
 }
 
-// `DoubleBigDigit` size dependent
 #[inline]
-fn get_radix_base(radix: u32) -> (DoubleBigDigit, usize) {
+fn get_radix_base(radix: u32) -> (u64, usize) {
     match radix {
         2  => (4294967296, 32),
         3  => (3486784401, 20),
@@ -2971,7 +2976,7 @@ mod biguint_tests {
         a - b;
     }
 
-    const M: u32 = ::std::u32::MAX;
+    const M: BigDigit = big_digit::MAX;
     const MUL_TRIPLES: &'static [(&'static [BigDigit],
                                   &'static [BigDigit],
                                   &'static [BigDigit])] = &[
@@ -3727,7 +3732,7 @@ mod bigint_tests {
         }
     }
 
-    const M: u32 = ::std::u32::MAX;
+    const M: BigDigit = big_digit::MAX;
     static MUL_TRIPLES: &'static [(&'static [BigDigit],
                                    &'static [BigDigit],
                                    &'static [BigDigit])] = &[
