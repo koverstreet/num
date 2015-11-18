@@ -74,6 +74,8 @@
        html_root_url = "https://rust-num.github.io/num/",
        html_playground_url = "http://play.integer32.com/")]
 
+#![feature(asm)]
+
 #[cfg(any(feature = "rand", test))]
 extern crate rand;
 #[cfg(feature = "rustc-serialize")]
