@@ -78,7 +78,12 @@ use traits::{ToPrimitive, FromPrimitive};
 use {Num, Unsigned, CheckedAdd, CheckedSub, CheckedMul, CheckedDiv, Signed, Zero, One};
 use self::Sign::{Minus, NoSign, Plus};
 
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 #[path = "arithmetic/usize.rs"]
+mod big_digit;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[path = "arithmetic/x86_86.rs"]
 mod big_digit;
 
 pub use bigint::big_digit::BigDigit;
