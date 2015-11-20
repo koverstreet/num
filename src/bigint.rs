@@ -94,6 +94,7 @@ pub mod big_digit {
 
     // `DoubleBigDigit` size dependent
     pub const BITS: usize = 32;
+    pub use ::std::u32::MAX;
 
     pub const BASE: DoubleBigDigit = 1 << BITS;
     const LO_MASK: DoubleBigDigit = (-1i32 as DoubleBigDigit) >> BITS;
@@ -145,6 +146,15 @@ fn sbb(a: BigDigit, b: BigDigit, borrow: &mut BigDigit) -> BigDigit {
        => ai - bi - borrow < 0 <=> hi == 0
        */
     *borrow = if hi == 0 { 1 } else { 0 };
+    lo
+}
+
+#[inline]
+fn mul_with_carry(a: BigDigit, b: BigDigit, carry: &mut BigDigit) -> BigDigit {
+    let (hi, lo) = big_digit::from_doublebigdigit(
+        (a as DoubleBigDigit) * (b as DoubleBigDigit) + (*carry as DoubleBigDigit)
+        );
+    *carry = hi;
     lo
 }
 
@@ -253,10 +263,6 @@ impl Num for BigUint {
     #[inline]
     fn from_str_radix(s: &str, radix: u32) -> Result<BigUint, ParseBigIntError> {
         let (base, unit_len) = get_radix_base(radix);
-        let base_num = match base.to_biguint() {
-            Some(base_num) => base_num,
-            None => { return Err(ParseBigIntError::Other); }
-        };
 
         let mut end            = s.len();
         let mut n: BigUint     = Zero::zero();
@@ -278,8 +284,8 @@ impl Num for BigUint {
             }
             end -= unit_len;
             // FIXME(#5992): assignment operator overloads
-            // power *= &base_num;
-            power = power * &base_num;
+            // power *= base;
+            power = power * base;
         }
     }
 }
@@ -807,6 +813,76 @@ impl<'a, 'b> Mul<&'b BigUint> for &'a BigUint {
         mul3(&self.data[..], &other.data[..])
     }
 }
+
+fn mul_digit(mut a: BigUint, b: BigDigit) -> BigUint {
+    if b == 0 { return Zero::zero(); }
+    if b == 1 { return a; }
+
+    let mut carry = 0;
+    for ai in a.data.iter_mut() {
+        *ai = mul_with_carry(*ai, b, &mut carry)
+    }
+
+    if carry != 0 {
+        a.data.push(carry);
+    }
+
+    a
+}
+
+macro_rules! biguint_primitive_mul {
+    ($T:ty) => {
+        impl Mul<$T> for BigUint {
+            type Output = BigUint;
+
+            #[inline]
+            fn mul(self, other: $T) -> BigUint {
+                if other as u64 <= big_digit::MAX as u64 {
+                    mul_digit(self, other as BigDigit)
+                } else {
+                    mul3(&self.data[..], &other.to_biguint().unwrap().data[..])
+                }
+            }
+        }
+
+        impl<'a> Mul<$T> for &'a BigUint {
+            type Output = BigUint;
+
+            #[inline]
+            fn mul(self, other: $T) -> BigUint {
+                if other as u64 <= big_digit::MAX as u64 {
+                    mul_digit(self.clone(), other as BigDigit)
+                } else {
+                    mul3(&self.data[..], &other.to_biguint().unwrap().data[..])
+                }
+            }
+        }
+
+        impl Mul<BigUint> for $T {
+            type Output = BigUint;
+
+            #[inline]
+            fn mul(self, other: BigUint) -> BigUint {
+                other * self
+            }
+        }
+
+        impl<'a> Mul<&'a BigUint> for $T {
+            type Output = BigUint;
+
+            #[inline]
+            fn mul(self, other: &'a BigUint) -> BigUint {
+                other * self
+            }
+        }
+    }
+}
+
+biguint_primitive_mul!(usize);
+biguint_primitive_mul!(u8);
+biguint_primitive_mul!(u16);
+biguint_primitive_mul!(u32);
+biguint_primitive_mul!(u64);
 
 fn div_rem_digit(mut a: BigUint, b: BigDigit) -> (BigUint, BigDigit) {
     let mut rem = 0;
@@ -2913,6 +2989,22 @@ mod biguint_tests {
 
             assert!(a == &b * &c + &d);
             assert!(a == &c * &b + &d);
+        }
+    }
+
+    use rand::{SeedableRng, StdRng, Rng};
+
+    #[test]
+    fn test_mul_scalar() {
+        let seed: &[_] = &[1, 2, 3, 4];
+        let mut rng: StdRng = SeedableRng::from_seed(seed);
+
+        for _ in 0..100 {
+            let x: BigUint  = rng.gen_biguint(1 << 8);
+            let y: BigDigit = rng.gen();
+
+            assert_eq!(&x * y,
+                       x * y.to_biguint().unwrap());
         }
     }
 
