@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::cmp;
 use std::cmp::Ordering::{self, Less, Greater, Equal};
 use std::iter::repeat;
@@ -731,58 +730,90 @@ pub fn ilog2<T: traits::PrimInt>(v: T) -> usize {
     fls(v) - 1
 }
 
-#[inline]
-pub fn biguint_shl(n: Cow<BigUint>, bits: usize) -> BigUint {
-    let n_unit = bits / big_digit::BITS;
-    let mut data = match n_unit {
-        0 => n.into_owned().data,
-        _ => {
-            let len = n_unit + n.data.len() + 1;
-            let mut data = Vec::with_capacity(len);
-            data.extend(repeat(0).take(n_unit));
-            data.extend(n.data.iter().cloned());
-            data
-        }
-    };
+pub fn biguint_shl(mut n: BigUint, bits: usize) -> BigUint {
+    if bits == 0 || n.is_zero() { return n; }
 
     let n_bits = bits % big_digit::BITS;
-    if n_bits > 0 {
-        let mut carry = 0;
-        for elem in data[n_unit..].iter_mut() {
-            let new_carry = *elem >> (big_digit::BITS - n_bits);
-            *elem = (*elem << n_bits) | carry;
-            carry = new_carry;
-        }
-        if carry != 0 {
-            data.push(carry);
+    let n_unit = bits / big_digit::BITS + (n_bits != 0) as usize;
+
+    let mut src = n.data.len();
+    let mut dst = n.data.len() + n_unit;
+
+    n.data.extend(repeat(0).take(n_unit));
+
+    unsafe {
+        // the compiler currently isn't able to elide these bounds checks, sadly:
+
+        if n_bits != 0 {
+            let mut dst_w = 0;
+
+            while src != 0 {
+                src -= 1;
+                let src_w = *n.data.get_unchecked(src);
+
+                dst_w |= src_w >> (big_digit::BITS - n_bits);
+
+                dst -= 1;
+                *n.data.get_unchecked_mut(dst) = dst_w;
+
+                dst_w = src_w << n_bits;
+            }
+
+            dst -= 1;
+            *n.data.get_unchecked_mut(dst) = dst_w;
+        } else {
+            while src != 0 {
+                dst -= 1;
+                src -= 1;
+                *n.data.get_unchecked_mut(dst) = *n.data.get_unchecked(src);
+            }
         }
     }
 
-    BigUint::new(data)
+    /* keep iterating backwards so as not to confuse prefetching */
+    for i in (&mut n.data[0..dst]).iter_mut().rev() {
+        *i = 0;
+    }
+
+    n.normalize()
 }
 
-#[inline]
-pub fn biguint_shr(n: Cow<BigUint>, bits: usize) -> BigUint {
+pub fn biguint_shr(mut n: BigUint, bits: usize) -> BigUint {
+    if bits == 0 || n.is_zero() { return n; }
+    if n.bits() <= bits         { return Zero::zero(); }
+
     let n_unit = bits / big_digit::BITS;
-    if n_unit >= n.data.len() {
-        return Zero::zero();
-    }
-    let mut data = match n_unit {
-        0 => n.into_owned().data,
-        _ => n.data[n_unit..].to_vec(),
-    };
-
     let n_bits = bits % big_digit::BITS;
-    if n_bits > 0 {
-        let mut borrow = 0;
-        for elem in data.iter_mut().rev() {
-            let new_borrow = *elem << (big_digit::BITS - n_bits);
-            *elem = (*elem >> n_bits) | borrow;
-            borrow = new_borrow;
-        }
-    }
 
-    BigUint::new(data)
+    if n_bits != 0 {
+        unsafe {
+            let mut src: usize = n_unit;
+            let mut dst: usize = 0;
+            let mut dst_w = *n.data.get_unchecked(src) >> n_bits;
+            src += 1;
+
+            while src != n.data.len() {
+                let src_w = *n.data.get_unchecked(src);
+                src += 1;
+
+                dst_w |= src_w << (big_digit::BITS - n_bits);
+
+                *n.data.get_unchecked_mut(dst) = dst_w;
+                dst += 1;
+
+                dst_w = src_w >> n_bits;
+            }
+
+            *n.data.get_unchecked_mut(dst) = dst_w;
+            dst += 1;
+
+            n.data.truncate(dst);
+            n.normalize()
+        }
+    } else {
+        n.data.drain(0..n_unit);
+        n
+    }
 }
 
 pub fn cmp_slice(a: &[BigDigit], b: &[BigDigit]) -> Ordering {

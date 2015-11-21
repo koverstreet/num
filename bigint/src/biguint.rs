@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::default::Default;
 use std::iter::repeat;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Rem, Shl, Shr, Sub};
@@ -324,7 +323,7 @@ impl Shl<usize> for BigUint {
 
     #[inline]
     fn shl(self, rhs: usize) -> BigUint {
-        biguint_shl(Cow::Owned(self), rhs)
+        biguint_shl(self, rhs)
     }
 }
 
@@ -333,7 +332,7 @@ impl<'a> Shl<usize> for &'a BigUint {
 
     #[inline]
     fn shl(self, rhs: usize) -> BigUint {
-        biguint_shl(Cow::Borrowed(self), rhs)
+        biguint_shl(self.clone(), rhs)
     }
 }
 
@@ -342,7 +341,7 @@ impl Shr<usize> for BigUint {
 
     #[inline]
     fn shr(self, rhs: usize) -> BigUint {
-        biguint_shr(Cow::Owned(self), rhs)
+        biguint_shr(self, rhs)
     }
 }
 
@@ -351,7 +350,7 @@ impl<'a> Shr<usize> for &'a BigUint {
 
     #[inline]
     fn shr(self, rhs: usize) -> BigUint {
-        biguint_shr(Cow::Borrowed(self), rhs)
+        biguint_shr(self.clone(), rhs)
     }
 }
 
