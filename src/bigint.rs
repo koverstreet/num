@@ -480,8 +480,46 @@ impl<'a> BitXor<&'a BigUint> for BigUint {
 impl Shl<usize> for BigUint {
     type Output = BigUint;
 
-    #[inline]
-    fn shl(self, rhs: usize) -> BigUint { (&self) << rhs }
+    fn shl(mut self, rhs: usize) -> BigUint {
+        if rhs == 0 || self.is_zero() { return self; }
+
+        let n_bits = rhs % big_digit::BITS;
+        let n_unit = rhs / big_digit::BITS + (n_bits != 0) as usize;
+
+        let mut src = self.data.len() - 1;
+        let mut dst = self.data.len() + n_unit - 1;
+
+        self.data.extend(repeat(0).take(n_unit));
+
+        if n_bits != 0 {
+            src += 1;
+        }
+
+        loop {
+            let mut w = self.data[src] << n_bits;
+
+            if src == 0 {
+                self.data[dst] = w;
+                break;
+            }
+
+            src -= 1;
+
+            if n_bits != 0 {
+                w |= self.data[src] >> (big_digit::BITS - n_bits);
+            }
+
+            self.data[dst] = w;
+            dst -= 1;
+        }
+
+        while dst != 0 {
+            dst -= 1;
+            self.data[dst] = 0;
+        }
+
+        self.normalize()
+    }
 }
 
 impl<'a> Shl<usize> for &'a BigUint {
@@ -489,17 +527,46 @@ impl<'a> Shl<usize> for &'a BigUint {
 
     #[inline]
     fn shl(self, rhs: usize) -> BigUint {
-        let n_unit = rhs / big_digit::BITS;
-        let n_bits = rhs % big_digit::BITS;
-        self.shl_unit(n_unit).shl_bits(n_bits)
+        self.clone() << rhs
     }
 }
 
 impl Shr<usize> for BigUint {
     type Output = BigUint;
 
-    #[inline]
-    fn shr(self, rhs: usize) -> BigUint { (&self) >> rhs }
+    fn shr(mut self, rhs: usize) -> BigUint {
+        if rhs == 0 || self.is_zero() { return self; }
+
+        let n_unit = rhs / big_digit::BITS;
+        let n_bits = rhs % big_digit::BITS;
+
+        let mut src: usize = n_unit;
+        let mut dst: usize = 0;
+
+        if self.data.len() <= n_unit {
+            return Zero::zero();
+        }
+
+        loop {
+            let mut w = self.data[src] >> n_bits;
+            src += 1;
+
+            if src == self.data.len() {
+                self.data[dst] = w;
+                break;
+            }
+
+            if n_bits != 0 {
+                w |= self.data[src] << (big_digit::BITS - n_bits);
+            }
+
+            self.data[dst] = w;
+            dst += 1;
+        }
+
+        self.data.truncate(dst + 1);
+        self.normalize()
+    }
 }
 
 impl<'a> Shr<usize> for &'a BigUint {
@@ -507,9 +574,7 @@ impl<'a> Shr<usize> for &'a BigUint {
 
     #[inline]
     fn shr(self, rhs: usize) -> BigUint {
-        let n_unit = rhs / big_digit::BITS;
-        let n_bits = rhs % big_digit::BITS;
-        self.shr_unit(n_unit).shr_bits(n_bits)
+        self.clone() >> rhs
     }
 }
 
@@ -1339,57 +1404,6 @@ impl BigUint {
     #[inline]
     pub fn parse_bytes(buf: &[u8], radix: u32) -> Option<BigUint> {
         str::from_utf8(buf).ok().and_then(|s| BigUint::from_str_radix(s, radix).ok())
-    }
-
-    #[inline]
-    fn shl_unit(&self, n_unit: usize) -> BigUint {
-        if n_unit == 0 || self.is_zero() { return self.clone(); }
-
-        let mut v = vec![0; n_unit];
-        v.extend(self.data.iter().cloned());
-        BigUint::new(v)
-    }
-
-    #[inline]
-    fn shl_bits(self, n_bits: usize) -> BigUint {
-        if n_bits == 0 || self.is_zero() { return self; }
-
-        assert!(n_bits < big_digit::BITS);
-
-        let mut carry = 0;
-        let mut shifted = self.data;
-        for elem in shifted.iter_mut() {
-            let new_carry = *elem >> (big_digit::BITS - n_bits);
-            *elem = (*elem << n_bits) | carry;
-            carry = new_carry;
-        }
-        if carry != 0 {
-            shifted.push(carry);
-        }
-        BigUint::new(shifted)
-    }
-
-    #[inline]
-    fn shr_unit(&self, n_unit: usize) -> BigUint {
-        if n_unit == 0 { return self.clone(); }
-        if self.data.len() < n_unit { return Zero::zero(); }
-        BigUint::from_slice(&self.data[n_unit ..])
-    }
-
-    #[inline]
-    fn shr_bits(self, n_bits: usize) -> BigUint {
-        if n_bits == 0 || self.data.is_empty() { return self; }
-
-        assert!(n_bits < big_digit::BITS);
-
-        let mut borrow = 0;
-        let mut shifted = self.data;
-        for elem in shifted.iter_mut().rev() {
-            let new_borrow = *elem << (big_digit::BITS - n_bits);
-            *elem = (*elem >> n_bits) | borrow;
-            borrow = new_borrow;
-        }
-        BigUint::new(shifted)
     }
 
     /// Determines the fewest bits necessary to express the `BigUint`.
