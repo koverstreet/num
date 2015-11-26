@@ -3284,6 +3284,28 @@ mod biguint_tests {
         // Switching u and l should fail:
         let _n: BigUint = rng.gen_biguint_range(&u, &l);
     }
+
+    #[ignore]
+    #[test]
+    fn test_mul_divide_torture() {
+        let xbits = 1 << 7;
+        let ybits = 1 << 12;
+        let seed: &[_] = &[1, 2, 3, 4];
+        let mut rng: StdRng = SeedableRng::from_seed(seed);
+
+        for _ in 0..100000 {
+            let x = rng.gen_biguint(xbits);
+            let y = rng.gen_biguint(ybits);
+
+            if x.is_zero() || y.is_zero() {
+                continue;
+            }
+
+            let prod = &x * &y;
+            assert_eq!(&prod / &x, y);
+            assert_eq!(&prod / &y, x);
+        }
+    }
 }
 
 #[cfg(test)]
