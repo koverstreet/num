@@ -599,6 +599,70 @@ impl<'a> Add<&'a BigUint> for BigUint {
     }
 }
 
+macro_rules! biguint_primitive_add {
+    ($T:ty) => {
+        impl Add<$T> for BigUint {
+            type Output = BigUint;
+
+            fn add(mut self, other: $T) -> BigUint {
+                let mut carry = 0;
+
+                /* This assumes BigDigit is at least a u32: */
+                if mem::size_of::<$T>() > mem::size_of::<BigDigit>() {
+                    while self.data.len() < 2 {
+                        self.data.push(0);
+                    }
+
+                    self.data[0] = adc(self.data[0], other as BigDigit, &mut carry);
+                    self.data[1] = adc(self.data[1], (other as u64 >> big_digit::BITS()) as BigDigit, &mut carry);
+                    self.data[2] = adc(self.data[2], 0, &mut carry);
+                } else {
+                    while self.data.len() < 1 {
+                        self.data.push(0);
+                    }
+
+                    self.data[0] = adc(self.data[0], other as BigDigit, &mut carry);
+                    self.data[1] = adc(self.data[1], 0, &mut carry);
+                }
+                self
+            }
+        }
+
+        impl<'a> Add<$T> for &'a BigUint {
+            type Output = BigUint;
+
+            #[inline]
+            fn add(self, other: $T) -> BigUint {
+                self.clone() + other
+            }
+        }
+
+        impl Add<BigUint> for $T {
+            type Output = BigUint;
+
+            #[inline]
+            fn add(self, other: BigUint) -> BigUint {
+                other + self
+            }
+        }
+
+        impl<'a> Add<&'a BigUint> for $T {
+            type Output = BigUint;
+
+            #[inline]
+            fn add(self, other: &'a BigUint) -> BigUint {
+                other + self
+            }
+        }
+    }
+}
+
+biguint_primitive_add!(usize);
+biguint_primitive_add!(u8);
+biguint_primitive_add!(u16);
+biguint_primitive_add!(u32);
+biguint_primitive_add!(u64);
+
 forward_all_binop_to_val_ref!(impl Sub for BigUint, sub);
 
 fn sub2(a: &mut [BigDigit], b: &[BigDigit]) {
@@ -628,6 +692,51 @@ impl<'a> Sub<&'a BigUint> for BigUint {
         self.normalize()
     }
 }
+
+macro_rules! biguint_primitive_sub {
+    ($T:ty) => {
+        impl Sub<$T> for BigUint {
+            type Output = BigUint;
+
+            fn sub(mut self, other: $T) -> BigUint {
+                let mut carry = 0;
+
+                if mem::size_of::<$T>() > mem::size_of::<BigDigit>() {
+                    while self.data.len() < 2 {
+                        self.data.push(0);
+                    }
+
+                    self.data[0] = sbb(self.data[0], other as BigDigit, &mut carry);
+                    self.data[1] = sbb(self.data[1], (other as u64 >> big_digit::BITS()) as BigDigit, &mut carry);
+                    self.data[2] = sbb(self.data[2], 0, &mut carry);
+                } else {
+                    while self.data.len() < 1 {
+                        self.data.push(0);
+                    }
+
+                    self.data[0] = sbb(self.data[0], other as BigDigit, &mut carry);
+                    self.data[1] = sbb(self.data[1], 0, &mut carry);
+                }
+                self
+            }
+        }
+
+        impl<'a> Sub<$T> for &'a BigUint {
+            type Output = BigUint;
+
+            #[inline]
+            fn sub(self, other: $T) -> BigUint {
+                self.clone() + other
+            }
+        }
+    }
+}
+
+biguint_primitive_sub!(usize);
+biguint_primitive_sub!(u8);
+biguint_primitive_sub!(u16);
+biguint_primitive_sub!(u32);
+biguint_primitive_sub!(u64);
 
 fn sub_sign(a: &[BigDigit], b: &[BigDigit]) -> BigInt {
     // Normalize:
@@ -974,8 +1083,7 @@ fn div_knuth(a: &[BigDigit], b: &[BigDigit]) -> (BigUint, BigUint) {
         let mut prod = &b * &q0;
 
         while cmp_slice(&prod.data[..], &a.data[j..]) == Greater {
-            let one: BigUint = One::one();
-            q0 = q0 - one;
+            q0 = q0 - 1u32;
             prod = prod - &b;
         }
 
@@ -1033,9 +1141,8 @@ fn div_divide_and_conquer_2(a: &[BigDigit], b: &[BigDigit]) -> (BigUint, BigUint
     r = (r << (base * big_digit::BITS())) + &a[..base];
 
     while r < d {
-        let one: BigUint = One::one();
-        q = q - one;
         r = r + b;
+        q = q - 1u32;
     }
 
     r = r - d;
