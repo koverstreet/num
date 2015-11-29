@@ -89,6 +89,9 @@ mod big_digit;
 pub use bigint::big_digit::BigDigit;
 use bigint::big_digit::{MAX, BITS, adc, sbb, mul_with_carry, mac_with_carry, div_wide};
 
+const DIV_RECURSE_MIN: usize = 64;
+const MUL_KARATSUBA_MIN: usize = 5;
+
 /// A big unsigned integer type.
 ///
 /// A `BigUint`-typed value `BigUint { data: vec!(a, b, c) }` represents a number
@@ -540,6 +543,15 @@ fn add2(a: &mut [BigDigit], b: &[BigDigit]) {
     debug_assert!(carry == 0);
 }
 
+fn shl_accumulate(mut a: BigUint, b: &[BigDigit], b_shift: usize) -> BigUint {
+    let e = cmp::max(a.data.len(), b.len() + b_shift) + 1 - a.data.len();
+
+    a.data.extend(repeat(0).take(e));
+
+    add2(&mut a.data[b_shift..], b);
+    a.normalize()
+}
+
 /*
  * We'd really prefer to avoid using add2/sub2 directly as much as possible - since they make the
  * caller entirely responsible for ensuring a's vector is big enough, and that the result is
@@ -668,7 +680,7 @@ fn mac3(acc: &mut [BigDigit], b: &[BigDigit], c: &[BigDigit]) {
     /*
      * Karatsuba multiplication is slower than long multiplication for small x and y:
      */
-    if x.len() <= 4 {
+    if x.len() < MUL_KARATSUBA_MIN {
         for (i, xi) in x.iter().enumerate() {
             mac_digit(&mut acc[i..], y, *xi);
         }
@@ -896,6 +908,189 @@ fn div_rem_digit(mut a: BigUint, b: BigDigit) -> (BigUint, BigDigit) {
     (a.normalize(), rem)
 }
 
+/// Knuth, TAOCP vol 2 section 4.3, algorithm D:
+fn div_knuth(a: &[BigDigit], b: &[BigDigit]) -> (BigUint, BigUint) {
+    let mut a = BigUint::from_slice(a);
+    let b = BigUint::from_slice(b);
+
+    let bn = *b.data.last().unwrap();
+
+    /* avoid underflow calculating q_len: */
+    if a.data.len() < b.data.len() {
+        return (Zero::zero(), a);
+    }
+
+    let q_len = a.data.len() - b.data.len() + 1;
+    let mut q: BigUint = BigUint { data: Vec::with_capacity(q_len) };
+
+    q.data.extend(repeat(0).take(q_len));
+
+    /*
+     * We reuse the same temporary to avoid hitting the allocator in our inner loop - this is sized
+     * to hold a0 (in the common case; if a particular digit of the quotient is zero a0 can be
+     * bigger).
+     */
+    let mut tmp: BigUint = BigUint { data: Vec::with_capacity(2) };
+
+    /*
+     * The algorithm works by incrementally calculating "guesses", q0, for part of the
+     * remainder. Once we have any number q0 such that q0 * b <= a, we can set
+     *
+     *     q += q0
+     *     a -= q0 * b
+     *
+     * and then iterate until a < b. Then, (q, a) will be our desired quotient and
+     * remainder.
+     *
+     * q0, our guess, is calculated by dividing the last few digits of a by the last digit
+     * of b - this should give us a guess that is "close" to the actual quotient, but is
+     * possibly greater than the actual quotient. If q0 * b > a, we simply use iterated
+     * subtraction until we have a guess such that q8 & b <= a.
+     */
+    for j in (0..q_len).rev() {
+        /*
+         * When calculating our next guess q0, we don't need to consider the digits below j
+         * + b.data.len() - 1: we're guessing digit j of the quotient (i.e. q0 << j) from
+         * digit bn of the divisor (i.e. bn << (b.data.len() - 1) - so the product of those
+         * two numbers will be zero in all digits up to (j + b.data.len() - 1).
+         */
+        let offset = j + b.data.len() - 1;
+        if offset >= a.data.len() {
+            continue;
+        }
+
+        /* just avoiding a heap allocation: */
+        let mut a0 = tmp;
+        a0.data.truncate(0);
+        a0.data.extend(a.data[offset..].iter().cloned());
+
+        /*
+         * q0 << j * big_digit::BITS is our actual quotient estimate - we do the shifts
+         * implicitly at the end, when adding and subtracting to a and q. Not only do we
+         * save the cost of the shifts, the rest of the arithmetic gets to work with
+         * smaller numbers.
+         */
+        let (mut q0, _) = div_rem_digit(a0, bn);
+        let mut prod = &b * &q0;
+
+        while cmp_slice(&prod.data[..], &a.data[j..]) == Greater {
+            let one: BigUint = One::one();
+            q0 = q0 - one;
+            prod = prod - &b;
+        }
+
+        add2(&mut q.data[j..], &q0.data[..]);
+        sub2(&mut a.data[j..], &prod.data[..]);
+        a = a.normalize();
+
+        tmp = q0;
+    }
+
+    debug_assert!(a < b);
+
+    (q.normalize(), a)
+}
+
+fn div_divide_and_conquer_1(a: &[BigDigit], b: &[BigDigit]) -> (BigUint, BigUint) {
+    let base = b.len() / 2;
+
+    assert!(b.len() == base * 2);
+    assert!(a.len() <= base * 4);
+
+    if a.len() < b.len() {
+        return (Zero::zero(), BigUint::from_slice(a));
+    }
+
+    if b.len() < DIV_RECURSE_MIN {
+        return div_knuth(a, b);
+    }
+
+    let (alo, ahi) = a.split_at(base);
+    let (qhi, mut r) = div_divide_and_conquer_2(ahi, b);
+
+    r = (r << (base * big_digit::BITS())) + alo;
+
+    let (qlo, r) = div_divide_and_conquer_2(&r.data[..], b);
+
+    let q = shl_accumulate(qlo, &qhi.data[..], base);
+
+    (q.normalize(), r.normalize())
+}
+
+fn div_divide_and_conquer_2(a: &[BigDigit], b: &[BigDigit]) -> (BigUint, BigUint) {
+    let base = b.len() / 2;
+
+    assert!(b.len() == base * 2);
+    assert!(a.len() <= base * 3);
+
+    if a.len() < b.len() {
+        return (Zero::zero(), BigUint::from_slice(a));
+    }
+
+    let (mut q, mut r) = div_divide_and_conquer_1(&a[base..], &b[base..]);
+    let d = mul3(&q.data[..], &b[..base]);
+
+    r = (r << (base * big_digit::BITS())) + &a[..base];
+
+    while r < d {
+        let one: BigUint = One::one();
+        q = q - one;
+        r = r + b;
+    }
+
+    r = r - d;
+
+    (q, r)
+}
+
+fn round_up<T>(a: T, b: T) -> T
+    where T: Integer, T: Copy
+{
+    (a + (b - One::one())) / b * b
+}
+
+fn div4(a: &[BigDigit], b: &[BigDigit]) -> (BigUint, BigUint) {
+    if b.len() < DIV_RECURSE_MIN {
+        /* Normalize: */
+
+        let shift = b.last().unwrap().leading_zeros() as usize;
+        let a = BigUint::from_slice(a) << shift;
+        let b = BigUint::from_slice(b) << shift;
+
+        let (q, r) = div_knuth(&a.data[..], &b.data[..]);
+        return (q, r >> shift);
+    }
+
+    /* Normalize: */
+    let n = (b.len() / DIV_RECURSE_MIN).next_power_of_two() * DIV_RECURSE_MIN;
+    let shift = (n - b.len()) * big_digit::BITS() as usize +
+        b.last().unwrap().leading_zeros() as usize;
+
+    let mut a = BigUint::from_slice(a) << shift;
+    let b = BigUint::from_slice(b) << shift;
+
+    let mut q: BigUint = Zero::zero();
+
+    while a.data.len() > n * 2 {
+        let t = round_up(a.data.len(), n) - n * 2;
+        let (q0, r) = div_divide_and_conquer_1(&a.data[t..], &b.data[..]);
+
+        q = shl_accumulate(q, &q0.data[..], t);
+        a.data.truncate(t);
+        a = shl_accumulate(a, &r.data[..], t);
+    }
+
+    let (q0, r) = if a.data.len() > b.data.len() / 2 * 3 {
+        div_divide_and_conquer_1(&a.data[..], &b.data[..])
+    } else {
+        div_divide_and_conquer_2(&a.data[..], &b.data[..])
+    };
+
+    q = q + q0;
+
+    (q, r >> shift)
+}
+
 forward_all_binop_to_ref_ref!(impl Div for BigUint, div);
 
 impl<'a, 'b> Div<&'b BigUint> for &'a BigUint {
@@ -991,94 +1186,7 @@ impl Integer for BigUint {
         if self.is_zero() { return (Zero::zero(), Zero::zero()); }
         if *other == One::one() { return (self.clone(), Zero::zero()); }
 
-        /* Required or the q_len calculation below can underflow: */
-        match self.cmp(other) {
-            Less    => return (Zero::zero(), self.clone()),
-            Equal   => return (One::one(), Zero::zero()),
-            Greater => {} // Do nothing
-        }
-
-        /*
-         * This algorithm is from Knuth, TAOCP vol 2 section 4.3, algorithm D:
-         *
-         * First, normalize the arguments so the highest bit in the highest digit of the divisor is
-         * set: the main loop uses the highest digit of the divisor for generating guesses, so we
-         * want it to be the largest number we can efficiently divide by.
-         */
-        let shift = other.data.last().unwrap().leading_zeros() as usize;
-        let mut a = self << shift;
-        let b     = other << shift;
-
-        /*
-         * The algorithm works by incrementally calculating "guesses", q0, for part of the
-         * remainder. Once we have any number q0 such that q0 * b <= a, we can set
-         *
-         *     q += q0
-         *     a -= q0 * b
-         *
-         * and then iterate until a < b. Then, (q, a) will be our desired quotient and remainder.
-         *
-         * q0, our guess, is calculated by dividing the last few digits of a by the last digit of b
-         * - this should give us a guess that is "close" to the actual quotient, but is possibly
-         * greater than the actual quotient. If q0 * b > a, we simply use iterated subtraction
-         * until we have a guess such that q0 & b <= a.
-         */
-
-        let bn = *b.data.last().unwrap();
-        let q_len = a.data.len() - b.data.len() + 1;
-        let mut q: BigUint = BigUint { data: Vec::with_capacity(q_len) };
-
-        q.data.extend(repeat(0).take(q_len));
-
-        /*
-         * We reuse the same temporary to avoid hitting the allocator in our inner loop - this is
-         * sized to hold a0 (in the common case; if a particular digit of the quotient is zero a0
-         * can be bigger).
-         */
-        let mut tmp: BigUint = BigUint { data: Vec::with_capacity(2) };
-
-        for j in (0..q_len).rev() {
-            /*
-             * When calculating our next guess q0, we don't need to consider the digits below j
-             * + b.data.len() - 1: we're guessing digit j of the quotient (i.e. q0 << j) from
-             * digit bn of the divisor (i.e. bn << (b.data.len() - 1) - so the product of those
-             * two numbers will be zero in all digits up to (j + b.data.len() - 1).
-             */
-            let offset = j + b.data.len() - 1;
-            if offset >= a.data.len() {
-                continue;
-            }
-
-            /* just avoiding a heap allocation: */
-            let mut a0 = tmp;
-            a0.data.truncate(0);
-            a0.data.extend(a.data[offset..].iter().cloned());
-
-            /*
-             * q0 << j * big_digit::BITS is our actual quotient estimate - we do the shifts
-             * implicitly at the end, when adding and subtracting to a and q. Not only do we
-             * save the cost of the shifts, the rest of the arithmetic gets to work with
-             * smaller numbers.
-             */
-            let (mut q0, _) = div_rem_digit(a0, bn);
-            let mut prod = &b * &q0;
-
-            while cmp_slice(&prod.data[..], &a.data[j..]) == Greater {
-                let one: BigUint = One::one();
-                q0 = q0 - one;
-                prod = prod - &b;
-            }
-
-            add2(&mut q.data[j..], &q0.data[..]);
-            sub2(&mut a.data[j..], &prod.data[..]);
-            a = a.normalize();
-
-            tmp = q0;
-        }
-
-        debug_assert!(a < b);
-
-        (q.normalize(), a >> shift)
+        div4(&self.data[..], &other.data[..])
     }
 
     /// Calculates the Greatest Common Divisor (GCD) of the number and `other`.
