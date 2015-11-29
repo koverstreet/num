@@ -80,6 +80,11 @@ fn divide_2(b: &mut Bencher) {
 }
 
 #[bench]
+fn divide_3(b: &mut Bencher) {
+    divide_bench(b, 1 << 22, 1 << 12);
+}
+
+#[bench]
 fn factorial_100(b: &mut Bencher) {
     b.iter(|| {
         factorial(100);
