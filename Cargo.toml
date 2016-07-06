@@ -71,3 +71,6 @@ rustc-serialize = [
   "num-complex/rustc-serialize",
   "num-rational/rustc-serialize"
 ]
+
+[profile.bench]
+debug = true
