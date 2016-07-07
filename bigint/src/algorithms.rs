@@ -10,116 +10,9 @@ use biguint::BigUint;
 use bigint::Sign;
 use bigint::Sign::{Minus, NoSign, Plus};
 
-#[allow(non_snake_case)]
-pub mod big_digit {
-    /// A `BigDigit` is a `BigUint`'s composing element.
-    pub type BigDigit = u32;
-
-    /// A `DoubleBigDigit` is the internal type used to do the computations.  Its
-    /// size is the double of the size of `BigDigit`.
-    pub type DoubleBigDigit = u64;
-
-    pub const ZERO_BIG_DIGIT: BigDigit = 0;
-
-    // `DoubleBigDigit` size dependent
-    pub const BITS: usize = 32;
-    pub use ::std::u32::MAX;
-
-    pub const BASE: DoubleBigDigit = 1 << BITS;
-    const LO_MASK: DoubleBigDigit = (-1i32 as DoubleBigDigit) >> BITS;
-
-    #[inline]
-    fn get_hi(n: DoubleBigDigit) -> BigDigit {
-        (n >> BITS) as BigDigit
-    }
-    #[inline]
-    fn get_lo(n: DoubleBigDigit) -> BigDigit {
-        (n & LO_MASK) as BigDigit
-    }
-
-    /// Split one `DoubleBigDigit` into two `BigDigit`s.
-    #[inline]
-    pub fn from_doublebigdigit(n: DoubleBigDigit) -> (BigDigit, BigDigit) {
-        (get_hi(n), get_lo(n))
-    }
-
-    /// Join two `BigDigit`s into one `DoubleBigDigit`
-    #[inline]
-    pub fn to_doublebigdigit(hi: BigDigit, lo: BigDigit) -> DoubleBigDigit {
-        (lo as DoubleBigDigit) | ((hi as DoubleBigDigit) << BITS)
-    }
-}
-
-use big_digit::{BigDigit, DoubleBigDigit};
-
-// Generic functions for add/subtract/multiply with carry/borrow:
-
-// Add with carry:
-#[inline]
-fn adc(a: BigDigit, b: BigDigit, carry: &mut BigDigit) -> BigDigit {
-    let (hi, lo) = big_digit::from_doublebigdigit((a as DoubleBigDigit) + (b as DoubleBigDigit) +
-                                                  (*carry as DoubleBigDigit));
-
-    *carry = hi;
-    lo
-}
-
-// Subtract with borrow:
-#[inline]
-fn sbb(a: BigDigit, b: BigDigit, borrow: &mut BigDigit) -> BigDigit {
-    let (hi, lo) = big_digit::from_doublebigdigit(big_digit::BASE + (a as DoubleBigDigit) -
-                                                  (b as DoubleBigDigit) -
-                                                  (*borrow as DoubleBigDigit));
-    // hi * (base) + lo == 1*(base) + ai - bi - borrow
-    // => ai - bi - borrow < 0 <=> hi == 0
-    *borrow = (hi == 0) as BigDigit;
-    lo
-}
-
-#[inline]
-pub fn mac_with_carry(a: BigDigit, b: BigDigit, c: BigDigit, carry: &mut BigDigit) -> BigDigit {
-    let (hi, lo) = big_digit::from_doublebigdigit((a as DoubleBigDigit) +
-                                                  (b as DoubleBigDigit) * (c as DoubleBigDigit) +
-                                                  (*carry as DoubleBigDigit));
-    *carry = hi;
-    lo
-}
-
-#[inline]
-pub fn mul_with_carry(a: BigDigit, b: BigDigit, carry: &mut BigDigit) -> BigDigit {
-    let (hi, lo) = big_digit::from_doublebigdigit((a as DoubleBigDigit) * (b as DoubleBigDigit) +
-                                                  (*carry as DoubleBigDigit));
-
-    *carry = hi;
-    lo
-}
-
-/// Divide a two digit numerator by a one digit divisor, returns quotient and remainder:
-///
-/// Note: the caller must ensure that both the quotient and remainder will fit into a single digit.
-/// This is _not_ true for an arbitrary numerator/denominator.
-///
-/// (This function also matches what the x86 divide instruction does).
-#[inline]
-fn div_wide(hi: BigDigit, lo: BigDigit, divisor: BigDigit) -> (BigDigit, BigDigit) {
-    debug_assert!(hi < divisor);
-
-    let lhs = big_digit::to_doublebigdigit(hi, lo);
-    let rhs = divisor as DoubleBigDigit;
-    ((lhs / rhs) as BigDigit, (lhs % rhs) as BigDigit)
-}
-
-pub fn div_rem_digit(mut a: BigUint, b: BigDigit) -> (BigUint, BigDigit) {
-    let mut rem = 0;
-
-    for d in a.data.iter_mut().rev() {
-        let (q, r) = div_wide(rem, *d, b);
-        *d = q;
-        rem = r;
-    }
-
-    (a.normalize(), rem)
-}
+use big_digit;
+use big_digit::BigDigit;
+use big_digit::{adc, sbb, mul_with_carry, mac_with_carry, div_wide};
 
 // Only for the Add impl:
 #[must_use]
@@ -623,6 +516,18 @@ fn div_rem_digit_inv(mut u: BigUint, d: BigDigit, v: BigDigit) -> (BigUint, BigD
     (u.normalize(), rem)
 }
 
+pub fn div_rem_digit(mut a: BigUint, b: BigDigit) -> (BigUint, BigDigit) {
+    let mut rem = 0;
+
+    for d in a.data.iter_mut().rev() {
+        let (q, r) = div_wide(rem, *d, b);
+        *d = q;
+        rem = r;
+    }
+
+    (a.normalize(), rem)
+}
+
 pub fn div_rem(u: &BigUint, d: &BigUint) -> (BigUint, BigUint) {
     if d.is_zero() {
         panic!()
@@ -733,8 +638,8 @@ pub fn ilog2<T: traits::PrimInt>(v: T) -> usize {
 pub fn biguint_shl(mut n: BigUint, bits: usize) -> BigUint {
     if bits == 0 || n.is_zero() { return n; }
 
-    let n_bits = bits % big_digit::BITS;
-    let n_unit = bits / big_digit::BITS + (n_bits != 0) as usize;
+    let n_bits = bits % big_digit::BITS();
+    let n_unit = bits / big_digit::BITS() + (n_bits != 0) as usize;
 
     let mut src = n.data.len();
     let mut dst = n.data.len() + n_unit;
@@ -751,7 +656,7 @@ pub fn biguint_shl(mut n: BigUint, bits: usize) -> BigUint {
                 src -= 1;
                 let src_w = *n.data.get_unchecked(src);
 
-                dst_w |= src_w >> (big_digit::BITS - n_bits);
+                dst_w |= src_w >> (big_digit::BITS() - n_bits);
 
                 dst -= 1;
                 *n.data.get_unchecked_mut(dst) = dst_w;
@@ -782,8 +687,8 @@ pub fn biguint_shr(mut n: BigUint, bits: usize) -> BigUint {
     if bits == 0 || n.is_zero() { return n; }
     if n.bits() <= bits         { return Zero::zero(); }
 
-    let n_unit = bits / big_digit::BITS;
-    let n_bits = bits % big_digit::BITS;
+    let n_unit = bits / big_digit::BITS();
+    let n_bits = bits % big_digit::BITS();
 
     if n_bits != 0 {
         unsafe {
@@ -796,7 +701,7 @@ pub fn biguint_shr(mut n: BigUint, bits: usize) -> BigUint {
                 let src_w = *n.data.get_unchecked(src);
                 src += 1;
 
-                dst_w |= src_w << (big_digit::BITS - n_bits);
+                dst_w |= src_w << (big_digit::BITS() - n_bits);
 
                 *n.data.get_unchecked_mut(dst) = dst_w;
                 dst += 1;

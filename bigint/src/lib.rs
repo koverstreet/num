@@ -140,13 +140,16 @@ fn hash<T: hash::Hash>(x: &T) -> u64 {
 #[macro_use]
 mod macros;
 
+#[path = "arithmetic/usize.rs"]
+mod big_digit;
+mod algorithms;
 mod biguint;
 mod bigint;
 
 pub use biguint::BigUint;
 pub use biguint::ToBigUint;
-pub use biguint::big_digit;
-pub use biguint::big_digit::{BigDigit, DoubleBigDigit, ZERO_BIG_DIGIT};
+//pub use big_digit;
+pub use big_digit::{BigDigit, ZERO_BIG_DIGIT};
 
 pub use bigint::Sign;
 pub use bigint::BigInt;

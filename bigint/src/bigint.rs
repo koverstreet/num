@@ -22,8 +22,8 @@ use traits::{ToPrimitive, FromPrimitive, Num, CheckedAdd, CheckedSub,
 use self::Sign::{Minus, NoSign, Plus};
 
 use super::ParseBigIntError;
-use super::big_digit;
-use super::big_digit::{BigDigit, DoubleBigDigit};
+use big_digit;
+use big_digit::BigDigit;
 use biguint;
 use biguint::to_str_radix_reversed;
 use biguint::BigUint;
@@ -387,31 +387,12 @@ impl Add<BigInt> for BigInt {
 
 promote_all_scalars!(impl Add for BigInt, add);
 forward_all_scalar_binop_to_val_val_commutative!(impl Add<BigDigit> for BigInt, add);
-forward_all_scalar_binop_to_val_val_commutative!(impl Add<DoubleBigDigit> for BigInt, add);
 
 impl Add<BigDigit> for BigInt {
     type Output = BigInt;
 
     #[inline]
     fn add(self, other: BigDigit) -> BigInt {
-        match self.sign {
-            NoSign => From::from(other),
-            Plus => BigInt::from_biguint(Plus, self.data + other),
-            Minus =>
-                match self.data.cmp(&From::from(other)) {
-                    Equal => Zero::zero(),
-                    Less => BigInt::from_biguint(Plus, other - self.data),
-                    Greater => BigInt::from_biguint(Minus, self.data - other),
-                }
-        }
-    }
-}
-
-impl Add<DoubleBigDigit> for BigInt {
-    type Output = BigInt;
-
-    #[inline]
-    fn add(self, other: DoubleBigDigit) -> BigInt {
         match self.sign {
             NoSign => From::from(other),
             Plus => BigInt::from_biguint(Plus, self.data + other),
@@ -519,7 +500,6 @@ impl Sub<BigInt> for BigInt {
 
 promote_all_scalars!(impl Sub for BigInt, sub);
 forward_all_scalar_binop_to_val_val!(impl Sub<BigDigit> for BigInt, sub);
-forward_all_scalar_binop_to_val_val!(impl Sub<DoubleBigDigit> for BigInt, sub);
 
 impl Sub<BigDigit> for BigInt {
     type Output = BigInt;
@@ -540,33 +520,6 @@ impl Sub<BigDigit> for BigInt {
 }
 
 impl Sub<BigInt> for BigDigit {
-    type Output = BigInt;
-
-    #[inline]
-    fn sub(self, other: BigInt) -> BigInt {
-        -(other - self)
-    }
-}
-
-impl Sub<DoubleBigDigit> for BigInt {
-    type Output = BigInt;
-
-    #[inline]
-    fn sub(self, other: DoubleBigDigit) -> BigInt {
-        match self.sign {
-            NoSign => BigInt::from_biguint(Minus, From::from(other)),
-            Minus => BigInt::from_biguint(Minus, self.data + other),
-            Plus =>
-                match self.data.cmp(&From::from(other)) {
-                    Equal => Zero::zero(),
-                    Greater => BigInt::from_biguint(Plus, self.data - other),
-                    Less => BigInt::from_biguint(Minus, other - self.data),
-                }
-        }
-    }
-}
-
-impl Sub<BigInt> for DoubleBigDigit {
     type Output = BigInt;
 
     #[inline]
@@ -643,22 +596,12 @@ impl<'a, 'b> Mul<&'b BigInt> for &'a BigInt {
 
 promote_all_scalars!(impl Mul for BigInt, mul);
 forward_all_scalar_binop_to_val_val_commutative!(impl Mul<BigDigit> for BigInt, mul);
-forward_all_scalar_binop_to_val_val_commutative!(impl Mul<DoubleBigDigit> for BigInt, mul);
 
 impl Mul<BigDigit> for BigInt {
     type Output = BigInt;
 
     #[inline]
     fn mul(self, other: BigDigit) -> BigInt {
-        BigInt::from_biguint(self.sign, self.data * other)
-    }
-}
-
-impl Mul<DoubleBigDigit> for BigInt {
-    type Output = BigInt;
-
-    #[inline]
-    fn mul(self, other: DoubleBigDigit) -> BigInt {
         BigInt::from_biguint(self.sign, self.data * other)
     }
 }
@@ -706,7 +649,6 @@ impl<'a, 'b> Div<&'b BigInt> for &'a BigInt {
 
 promote_all_scalars!(impl Div for BigInt, div);
 forward_all_scalar_binop_to_val_val!(impl Div<BigDigit> for BigInt, div);
-forward_all_scalar_binop_to_val_val!(impl Div<DoubleBigDigit> for BigInt, div);
 
 impl Div<BigDigit> for BigInt {
     type Output = BigInt;
@@ -718,24 +660,6 @@ impl Div<BigDigit> for BigInt {
 }
 
 impl Div<BigInt> for BigDigit {
-    type Output = BigInt;
-
-    #[inline]
-    fn div(self, other: BigInt) -> BigInt {
-        BigInt::from_biguint(other.sign, self / other.data)
-    }
-}
-
-impl Div<DoubleBigDigit> for BigInt {
-    type Output = BigInt;
-
-    #[inline]
-    fn div(self, other: DoubleBigDigit) -> BigInt {
-        BigInt::from_biguint(self.sign, self.data / other)
-    }
-}
-
-impl Div<BigInt> for DoubleBigDigit {
     type Output = BigInt;
 
     #[inline]
@@ -813,7 +737,6 @@ impl<'a, 'b> Rem<&'b BigInt> for &'a BigInt {
 
 promote_all_scalars!(impl Rem for BigInt, rem);
 forward_all_scalar_binop_to_val_val!(impl Rem<BigDigit> for BigInt, rem);
-forward_all_scalar_binop_to_val_val!(impl Rem<DoubleBigDigit> for BigInt, rem);
 
 impl Rem<BigDigit> for BigInt {
     type Output = BigInt;
@@ -825,24 +748,6 @@ impl Rem<BigDigit> for BigInt {
 }
 
 impl Rem<BigInt> for BigDigit {
-    type Output = BigInt;
-
-    #[inline]
-    fn rem(self, other: BigInt) -> BigInt {
-        BigInt::from_biguint(Plus, self % other.data)
-    }
-}
-
-impl Rem<DoubleBigDigit> for BigInt {
-    type Output = BigInt;
-
-    #[inline]
-    fn rem(self, other: DoubleBigDigit) -> BigInt {
-        BigInt::from_biguint(self.sign, self.data % other)
-    }
-}
-
-impl Rem<BigInt> for DoubleBigDigit {
     type Output = BigInt;
 
     #[inline]
@@ -1306,14 +1211,14 @@ pub trait RandBigInt {
 #[cfg(any(feature = "rand", test))]
 impl<R: Rng> RandBigInt for R {
     fn gen_biguint(&mut self, bit_size: usize) -> BigUint {
-        let (digits, rem) = bit_size.div_rem(&big_digit::BITS);
+        let (digits, rem) = bit_size.div_rem(&big_digit::BITS());
         let mut data = Vec::with_capacity(digits + 1);
         for _ in 0..digits {
             data.push(self.gen());
         }
         if rem > 0 {
             let final_digit: BigDigit = self.gen();
-            data.push(final_digit >> (big_digit::BITS - rem));
+            data.push(final_digit >> (big_digit::BITS() - rem));
         }
         BigUint::new(data)
     }

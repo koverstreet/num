@@ -16,15 +16,14 @@ use integer::Integer;
 use traits::{ToPrimitive, FromPrimitive, Float, Num, Unsigned, CheckedAdd, CheckedSub, CheckedMul,
              CheckedDiv, Zero, One};
 
-#[path = "algorithms.rs"]
-mod algorithms;
-pub use self::algorithms::big_digit;
-pub use self::big_digit::{BigDigit, DoubleBigDigit, ZERO_BIG_DIGIT};
+use big_digit;
+use big_digit::BigDigit;
+use big_digit::mac_with_carry;
 
-use self::algorithms::{mac_with_carry, mul3, scalar_mul, div_rem, div_rem_digit};
-use self::algorithms::{__add2, add2, sub2, sub2rev};
-use self::algorithms::{biguint_shl, biguint_shr};
-use self::algorithms::{cmp_slice, fls, ilog2};
+use algorithms::{mul3, scalar_mul, div_rem, div_rem_digit};
+use algorithms::{__add2, add2, sub2, sub2rev};
+use algorithms::{biguint_shl, biguint_shr};
+use algorithms::{cmp_slice, fls, ilog2};
 
 use UsizePromotion;
 
@@ -118,10 +117,10 @@ impl FromStr for BigUint {
 // Convert from a power of two radix (bits == ilog2(radix)) where bits evenly divides
 // BigDigit::BITS
 fn from_bitwise_digits_le(v: &[u8], bits: usize) -> BigUint {
-    debug_assert!(!v.is_empty() && bits <= 8 && big_digit::BITS % bits == 0);
+    debug_assert!(!v.is_empty() && bits <= 8 && big_digit::BITS() % bits == 0);
     debug_assert!(v.iter().all(|&c| (c as BigDigit) < (1 << bits)));
 
-    let digits_per_big_digit = big_digit::BITS / bits;
+    let digits_per_big_digit = big_digit::BITS() / bits;
 
     let data = v.chunks(digits_per_big_digit)
                 .map(|chunk| {
@@ -135,10 +134,10 @@ fn from_bitwise_digits_le(v: &[u8], bits: usize) -> BigUint {
 // Convert from a power of two radix (bits == ilog2(radix)) where bits doesn't evenly divide
 // BigDigit::BITS
 fn from_inexact_bitwise_digits_le(v: &[u8], bits: usize) -> BigUint {
-    debug_assert!(!v.is_empty() && bits <= 8 && big_digit::BITS % bits != 0);
+    debug_assert!(!v.is_empty() && bits <= 8 && big_digit::BITS() % bits != 0);
     debug_assert!(v.iter().all(|&c| (c as BigDigit) < (1 << bits)));
 
-    let big_digits = (v.len() * bits + big_digit::BITS - 1) / big_digit::BITS;
+    let big_digits = (v.len() * bits + big_digit::BITS() - 1) / big_digit::BITS();
     let mut data = Vec::with_capacity(big_digits);
 
     let mut d = 0;
@@ -150,9 +149,9 @@ fn from_inexact_bitwise_digits_le(v: &[u8], bits: usize) -> BigUint {
         d |= (c as BigDigit) << dbits;
         dbits += bits;
 
-        if dbits >= big_digit::BITS {
+        if dbits >= big_digit::BITS() {
             data.push(d);
-            dbits -= big_digit::BITS;
+            dbits -= big_digit::BITS();
             // if dbits was > big_digit::BITS, we dropped some of the bits in c (they couldn't fit
             // in d) - grab the bits we lost here:
             d = (c as BigDigit) >> (bits - dbits);
@@ -160,7 +159,7 @@ fn from_inexact_bitwise_digits_le(v: &[u8], bits: usize) -> BigUint {
     }
 
     if dbits > 0 {
-        debug_assert!(dbits < big_digit::BITS);
+        debug_assert!(dbits < big_digit::BITS());
         data.push(d as BigDigit);
     }
 
@@ -174,7 +173,7 @@ fn from_radix_digits_be(v: &[u8], radix: u32) -> BigUint {
 
     // Estimate how big the result will be, so we can pre-allocate it.
     let bits = (radix as f64).log2() * v.len() as f64;
-    let big_digits = (bits / big_digit::BITS as f64).ceil();
+    let big_digits = (bits / big_digit::BITS() as f64).ceil();
     let mut data = Vec::with_capacity(big_digits as usize);
 
     let (base, power) = get_radix_base(radix);
@@ -254,7 +253,7 @@ impl Num for BigUint {
             // Powers of two can use bitwise masks and shifting instead of multiplication
             let bits = ilog2(radix);
             v.reverse();
-            if big_digit::BITS % bits == 0 {
+            if big_digit::BITS() % bits == 0 {
                 from_bitwise_digits_le(&v, bits)
             } else {
                 from_inexact_bitwise_digits_le(&v, bits)
@@ -397,7 +396,6 @@ impl<'a> Add<&'a BigUint> for BigUint {
 
 promote_unsigned_scalars!(impl Add for BigUint, add);
 forward_all_scalar_binop_to_val_val_commutative!(impl Add<BigDigit> for BigUint, add);
-forward_all_scalar_binop_to_val_val_commutative!(impl Add<DoubleBigDigit> for BigUint, add);
 
 impl Add<BigDigit> for BigUint {
     type Output = BigUint;
@@ -415,28 +413,6 @@ impl Add<BigDigit> for BigUint {
             }
         }
         self
-    }
-}
-
-impl Add<DoubleBigDigit> for BigUint {
-    type Output = BigUint;
-
-    #[inline]
-    fn add(mut self, other: DoubleBigDigit) -> BigUint {
-        let (hi, lo) = big_digit::from_doublebigdigit(other);
-        if hi == 0 {
-            self + lo
-        } else {
-            while self.data.len() < 2 {
-                self.data.push(0);
-            }
-
-            let carry = __add2(&mut self.data, &[lo, hi]);
-            if carry != 0 {
-                self.data.push(carry);
-            }
-            self
-        }
     }
 }
 
@@ -468,7 +444,6 @@ impl<'a> Sub<BigUint> for &'a BigUint {
 
 promote_unsigned_scalars!(impl Sub for BigUint, sub);
 forward_all_scalar_binop_to_val_val!(impl Sub<BigDigit> for BigUint, sub);
-forward_all_scalar_binop_to_val_val!(impl Sub<DoubleBigDigit> for BigUint, sub);
 
 impl Sub<BigDigit> for BigUint {
     type Output = BigUint;
@@ -494,32 +469,6 @@ impl Sub<BigUint> for BigDigit {
     }
 }
 
-impl Sub<DoubleBigDigit> for BigUint {
-    type Output = BigUint;
-
-    #[inline]
-    fn sub(mut self, other: DoubleBigDigit) -> BigUint {
-        let (hi, lo) = big_digit::from_doublebigdigit(other);
-        sub2(&mut self.data[..], &[lo, hi]);
-        self.normalize()
-    }
-}
-
-impl Sub<BigUint> for DoubleBigDigit {
-    type Output = BigUint;
-
-    #[inline]
-    fn sub(self, mut other: BigUint) -> BigUint {
-        while other.data.len() < 2 {
-            other.data.push(0);
-        }
-
-        let (hi, lo) = big_digit::from_doublebigdigit(self);
-        sub2rev(&[lo, hi], &mut other.data[..]);
-        other.normalize()
-    }
-}
-
 forward_all_binop_to_ref_ref!(impl Mul for BigUint, mul);
 
 impl<'a, 'b> Mul<&'b BigUint> for &'a BigUint {
@@ -533,7 +482,6 @@ impl<'a, 'b> Mul<&'b BigUint> for &'a BigUint {
 
 promote_unsigned_scalars!(impl Mul for BigUint, mul);
 forward_all_scalar_binop_to_val_val_commutative!(impl Mul<BigDigit> for BigUint, mul);
-forward_all_scalar_binop_to_val_val_commutative!(impl Mul<DoubleBigDigit> for BigUint, mul);
 
 impl Mul<BigDigit> for BigUint {
     type Output = BigUint;
@@ -552,23 +500,6 @@ impl Mul<BigDigit> for BigUint {
     }
 }
 
-impl Mul<DoubleBigDigit> for BigUint {
-    type Output = BigUint;
-
-    #[inline]
-    fn mul(mut self, other: DoubleBigDigit) -> BigUint {
-        if other == 0 {
-            self.data.clear();
-            self
-        } else if other <= BigDigit::max_value() as DoubleBigDigit {
-            self * other as BigDigit
-        } else {
-            let (hi, lo) = big_digit::from_doublebigdigit(other);
-            mul3(&self.data[..], &[lo, hi])
-        }
-    }
-}
-
 forward_all_binop_to_ref_ref!(impl Div for BigUint, div);
 
 impl<'a, 'b> Div<&'b BigUint> for &'a BigUint {
@@ -583,7 +514,6 @@ impl<'a, 'b> Div<&'b BigUint> for &'a BigUint {
 
 promote_unsigned_scalars!(impl Div for BigUint, div);
 forward_all_scalar_binop_to_val_val!(impl Div<BigDigit> for BigUint, div);
-forward_all_scalar_binop_to_val_val!(impl Div<DoubleBigDigit> for BigUint, div);
 
 impl Div<BigDigit> for BigUint {
     type Output = BigUint;
@@ -608,30 +538,6 @@ impl Div<BigUint> for BigDigit {
     }
 }
 
-impl Div<DoubleBigDigit> for BigUint {
-    type Output = BigUint;
-
-    #[inline]
-    fn div(self, other: DoubleBigDigit) -> BigUint {
-        let (q, _) = self.div_rem(&From::from(other));
-        q
-    }
-}
-
-impl Div<BigUint> for DoubleBigDigit {
-    type Output = BigUint;
-
-    #[inline]
-    fn div(self, other: BigUint) -> BigUint {
-        match other.data.len() {
-            0 => panic!(),
-            1 => From::from(self / other.data[0] as u64),
-            2 => From::from(self / big_digit::to_doublebigdigit(other.data[1], other.data[0])),
-            _ => Zero::zero(),
-        }
-    }
-}
-
 forward_all_binop_to_ref_ref!(impl Rem for BigUint, rem);
 
 impl<'a, 'b> Rem<&'b BigUint> for &'a BigUint {
@@ -646,7 +552,6 @@ impl<'a, 'b> Rem<&'b BigUint> for &'a BigUint {
 
 promote_unsigned_scalars!(impl Rem for BigUint, rem);
 forward_all_scalar_binop_to_val_val!(impl Rem<BigDigit> for BigUint, rem);
-forward_all_scalar_binop_to_val_val!(impl Rem<DoubleBigDigit> for BigUint, rem);
 
 impl Rem<BigDigit> for BigUint {
     type Output = BigUint;
@@ -667,30 +572,6 @@ impl Rem<BigUint> for BigDigit {
             0 => panic!(),
             1 => From::from(self % other.data[0]),
             _ => From::from(self)
-        }
-    }
-}
-
-impl Rem<DoubleBigDigit> for BigUint {
-    type Output = BigUint;
-
-    #[inline]
-    fn rem(self, other: DoubleBigDigit) -> BigUint {
-        let (_, r) = self.div_rem(&From::from(other));
-        r
-    }
-}
-
-impl Rem<BigUint> for DoubleBigDigit {
-    type Output = BigUint;
-
-    #[inline]
-    fn rem(self, other: BigUint) -> BigUint {
-        match other.data.len() {
-            0 => panic!(),
-            1 => From::from(self % other.data[0] as u64),
-            2 => From::from(self % big_digit::to_doublebigdigit(other.data[0], other.data[1])),
-            _ => From::from(self),
         }
     }
 }
@@ -832,7 +713,7 @@ fn high_bits_to_u64(v: &BigUint) -> u64 {
             let mut ret_bits = 0;
 
             for d in v.data.iter().rev() {
-                let digit_bits = (bits - 1) % big_digit::BITS + 1;
+                let digit_bits = (bits - 1) % big_digit::BITS() + 1;
                 let bits_want = cmp::min(64 - ret_bits, digit_bits);
 
                 if bits_want != 64 {
@@ -876,7 +757,7 @@ impl ToPrimitive for BigUint {
             }
 
             ret += (*i as u64) << bits;
-            bits += big_digit::BITS;
+            bits += big_digit::BITS();
         }
 
         Some(ret)
@@ -971,7 +852,7 @@ impl From<u64> for BigUint {
         while n != 0 {
             ret.data.push(n as BigDigit);
             // don't overflow if BITS is 64:
-            n = (n >> 1) >> (big_digit::BITS - 1);
+            n = (n >> 1) >> (big_digit::BITS() - 1);
         }
 
         ret
@@ -1033,11 +914,11 @@ impl_to_biguint!(f64, FromPrimitive::from_f64);
 
 // Extract bitwise digits that evenly divide BigDigit
 fn to_bitwise_digits_le(u: &BigUint, bits: usize) -> Vec<u8> {
-    debug_assert!(!u.is_zero() && bits <= 8 && big_digit::BITS % bits == 0);
+    debug_assert!(!u.is_zero() && bits <= 8 && big_digit::BITS() % bits == 0);
 
     let last_i = u.data.len() - 1;
     let mask: BigDigit = (1 << bits) - 1;
-    let digits_per_big_digit = big_digit::BITS / bits;
+    let digits_per_big_digit = big_digit::BITS() / bits;
     let digits = (u.bits() + bits - 1) / bits;
     let mut res = Vec::with_capacity(digits);
 
@@ -1059,7 +940,7 @@ fn to_bitwise_digits_le(u: &BigUint, bits: usize) -> Vec<u8> {
 
 // Extract bitwise digits that don't evenly divide BigDigit
 fn to_inexact_bitwise_digits_le(u: &BigUint, bits: usize) -> Vec<u8> {
-    debug_assert!(!u.is_zero() && bits <= 8 && big_digit::BITS % bits != 0);
+    debug_assert!(!u.is_zero() && bits <= 8 && big_digit::BITS() % bits != 0);
 
     let mask: BigDigit = (1 << bits) - 1;
     let digits = (u.bits() + bits - 1) / bits;
@@ -1070,15 +951,15 @@ fn to_inexact_bitwise_digits_le(u: &BigUint, bits: usize) -> Vec<u8> {
 
     for c in &u.data {
         r |= *c << rbits;
-        rbits += big_digit::BITS;
+        rbits += big_digit::BITS();
 
         while rbits >= bits {
             res.push((r & mask) as u8);
             r >>= bits;
 
             // r had more bits than it could fit - grab the bits we lost
-            if rbits > big_digit::BITS {
-                r = *c >> (big_digit::BITS - (rbits - bits));
+            if rbits > big_digit::BITS() {
+                r = *c >> (big_digit::BITS() - (rbits - bits));
             }
 
             rbits -= bits;
@@ -1133,7 +1014,7 @@ pub fn to_radix_le(u: &BigUint, radix: u32) -> Vec<u8> {
     } else if radix.is_power_of_two() {
         // Powers of two can use bitwise masks and shifting instead of division
         let bits = ilog2(radix);
-        if big_digit::BITS % bits == 0 {
+        if big_digit::BITS() % bits == 0 {
             to_bitwise_digits_le(u, bits)
         } else {
             to_inexact_bitwise_digits_le(u, bits)
@@ -1275,7 +1156,7 @@ impl BigUint {
             let bits = ilog2(radix);
             let mut v = Vec::from(buf);
             v.reverse();
-            if big_digit::BITS % bits == 0 {
+            if big_digit::BITS() % bits == 0 {
                 from_bitwise_digits_le(&v, bits)
             } else {
                 from_inexact_bitwise_digits_le(&v, bits)
@@ -1313,7 +1194,7 @@ impl BigUint {
         let res = if radix.is_power_of_two() {
             // Powers of two can use bitwise masks and shifting instead of multiplication
             let bits = ilog2(radix);
-            if big_digit::BITS % bits == 0 {
+            if big_digit::BITS() % bits == 0 {
                 from_bitwise_digits_le(buf, bits)
             } else {
                 from_inexact_bitwise_digits_le(buf, bits)
@@ -1429,7 +1310,7 @@ impl BigUint {
             return 0;
         }
         let zeros = self.data.last().unwrap().leading_zeros();
-        return self.data.len() * big_digit::BITS - zeros as usize;
+        return self.data.len() * big_digit::BITS() - zeros as usize;
     }
 
     /// Strips off trailing zero bigdigits - comparisons require the last element in the vector to
@@ -1470,7 +1351,7 @@ fn get_radix_base(radix: u32) -> (BigDigit, usize) {
 
     // To generate this table:
     //    for radix in 2u64..257 {
-    //        let mut power = big_digit::BITS / fls(radix as u64);
+    //        let mut power = big_digit::BITS() / fls(radix as u64);
     //        let mut base = radix.pow(power as u32);
     //
     //        while let Some(b) = base.checked_mul(radix) {
@@ -1495,7 +1376,7 @@ fn get_radix_base(radix: u32) -> (BigDigit, usize) {
     //
     //        println!("({:20}, {:2}), // {:2}", base, power, radix);
     //    }
-    match big_digit::BITS {
+    match big_digit::BITS() {
         32  => {
             const BASES: [(u32, usize); 257] = [
                 (         0,  0),
