@@ -1607,3 +1607,25 @@ fn test_mul_divide_torture() {
 fn test_mul_divide_torture_long() {
     test_mul_divide_torture_count(1000000);
 }
+
+#[test]
+fn test_integer_reciprocal() {
+    use super::{integer_reciprocal, uadd, usub, umul};
+
+    use rand::{SeedableRng, StdRng, Rng};
+    let seed: &[_] = &[1, 2, 3, 4];
+    let mut rng: StdRng = SeedableRng::from_seed(seed);
+
+    for _ in 0..10000 {
+        let d = rng.gen_range(1 << (big_digit::BITS - 1), big_digit::MAX);
+        let v = integer_reciprocal(d);
+
+        let k = usub(&[big_digit::MAX, big_digit::MAX],
+                     &uadd(&umul(d, v), &[0, d]));
+        let k = uadd(&k, &[1, 0]);
+
+        // k = β^2 - (β + v) * d
+        // 1 <= k <= d
+        assert!(1 <= k[0] && k[0] <= d && k[1] == 0);
+    }
+}
