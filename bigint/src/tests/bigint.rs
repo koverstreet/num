@@ -321,7 +321,7 @@ fn test_convert_f32() {
     check(&BigInt::one(), 1.0);
     check(&BigInt::from(u16::MAX), 2.0.powi(16) - 1.0);
     check(&BigInt::from(1u64 << 32), 2.0.powi(32));
-    check(&BigInt::from_slice(Plus, &[0, 0, 1]), 2.0.powi(64));
+    check(&(BigInt::one() << 64), 2.0.powi(64));
     check(&((BigInt::one() << 100) + (BigInt::one() << 123)),
           2.0.powi(100) + 2.0.powi(123));
     check(&(BigInt::one() << 127), 2.0.powi(127));
@@ -402,8 +402,8 @@ fn test_convert_f64() {
     check(&BigInt::zero(), 0.0);
     check(&BigInt::one(), 1.0);
     check(&BigInt::from(u32::MAX), 2.0.powi(32) - 1.0);
-    check(&BigInt::from(1u64 << 32), 2.0.powi(32));
-    check(&BigInt::from_slice(Plus, &[0, 0, 1]), 2.0.powi(64));
+    check(&(BigInt::one() << 32), 2.0.powi(32));
+    check(&(BigInt::one() << 64), 2.0.powi(64));
     check(&((BigInt::one() << 100) + (BigInt::one() << 152)),
           2.0.powi(100) + 2.0.powi(152));
     check(&(BigInt::one() << 1023), 2.0.powi(1023));
@@ -492,8 +492,7 @@ fn test_convert_from_uint() {
     check!(u8, BigInt::from_slice(Plus, &[u8::MAX as BigDigit]));
     check!(u16, BigInt::from_slice(Plus, &[u16::MAX as BigDigit]));
     check!(u32, BigInt::from_slice(Plus, &[u32::MAX as BigDigit]));
-    check!(u64,
-           BigInt::from_slice(Plus, &[u32::MAX as BigDigit, u32::MAX as BigDigit]));
+    check!(u64, (BigInt::one() << 64) - BigInt::one());
     check!(usize, BigInt::from(usize::MAX as u64));
 }
 
@@ -521,8 +520,8 @@ fn test_convert_from_int() {
            BigInt::from_slice(Minus, &[1 << 31]),
            BigInt::from_slice(Plus, &[i32::MAX as BigDigit]));
     check!(i64,
-           BigInt::from_slice(Minus, &[0, 1 << 31]),
-           BigInt::from_slice(Plus, &[u32::MAX as BigDigit, i32::MAX as BigDigit]));
+           -((BigInt::one() << 63)),
+           (BigInt::one() << 63) - BigInt::one());
     check!(isize,
            BigInt::from(isize::MIN as i64),
            BigInt::from(isize::MAX as i64));
@@ -631,7 +630,7 @@ fn test_scalar_sub() {
     }
 }
 
-const M: u32 = ::std::u32::MAX;
+const M: BigDigit = big_digit::MAX;
 static MUL_TRIPLES: &'static [(&'static [BigDigit],
            &'static [BigDigit],
            &'static [BigDigit])] = &[(&[], &[], &[]),

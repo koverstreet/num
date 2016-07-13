@@ -24,6 +24,7 @@ pub mod big_digit {
 
     // `DoubleBigDigit` size dependent
     pub const BITS: usize = 32;
+    pub use ::std::u32::MAX;
 
     pub const BASE: DoubleBigDigit = 1 << BITS;
     const LO_MASK: DoubleBigDigit = (-1i32 as DoubleBigDigit) >> BITS;

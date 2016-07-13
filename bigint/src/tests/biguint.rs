@@ -465,10 +465,10 @@ fn test_shr() {
           "88887777666655554444333322221111");
 }
 
+// XXX: uses of these are pretty much all dependent on `BigDigit` size:
 const N1: BigDigit = -1i32 as BigDigit;
 const N2: BigDigit = -2i32 as BigDigit;
 
-// `DoubleBigDigit` size dependent
 #[test]
 fn test_convert_i64() {
     fn check(b1: BigUint, i: i64) {
@@ -483,9 +483,7 @@ fn test_convert_i64() {
 
     check(BigUint::new(vec![]), 0);
     check(BigUint::new(vec![1]), (1 << (0 * big_digit::BITS)));
-    check(BigUint::new(vec![N1]), (1 << (1 * big_digit::BITS)) - 1);
-    check(BigUint::new(vec![0, 1]), (1 << (1 * big_digit::BITS)));
-    check(BigUint::new(vec![N1, N1 >> 1]), i64::MAX);
+    check((BigUint::one() << 63) - BigUint::one(), i64::MAX);
 
     assert_eq!(i64::MIN.to_biguint(), None);
     assert_eq!(BigUint::new(vec![N1, N1]).to_i64(), None);
@@ -493,7 +491,6 @@ fn test_convert_i64() {
     assert_eq!(BigUint::new(vec![N1, N1, N1]).to_i64(), None);
 }
 
-// `DoubleBigDigit` size dependent
 #[test]
 fn test_convert_u64() {
     fn check(b1: BigUint, u: u64) {
@@ -509,9 +506,7 @@ fn test_convert_u64() {
 
     check(BigUint::new(vec![]), 0);
     check(BigUint::new(vec![1]), (1 << (0 * big_digit::BITS)));
-    check(BigUint::new(vec![N1]), (1 << (1 * big_digit::BITS)) - 1);
-    check(BigUint::new(vec![0, 1]), (1 << (1 * big_digit::BITS)));
-    check(BigUint::new(vec![N1, N1]), u64::MAX);
+    check((BigUint::one() << 64) - BigUint::one(), u64::MAX);
 
     assert_eq!(BigUint::new(vec![0, 0, 1]).to_u64(), None);
     assert_eq!(BigUint::new(vec![N1, N1, N1]).to_u64(), None);
@@ -529,7 +524,7 @@ fn test_convert_f32() {
     check(&BigUint::one(), 1.0);
     check(&BigUint::from(u16::MAX), 2.0.powi(16) - 1.0);
     check(&BigUint::from(1u64 << 32), 2.0.powi(32));
-    check(&BigUint::from_slice(&[0, 0, 1]), 2.0.powi(64));
+    check(&(BigUint::one() << 64), 2.0.powi(64));
     check(&((BigUint::one() << 100) + (BigUint::one() << 123)),
           2.0.powi(100) + 2.0.powi(123));
     check(&(BigUint::one() << 127), 2.0.powi(127));
@@ -600,7 +595,7 @@ fn test_convert_f64() {
     check(&BigUint::one(), 1.0);
     check(&BigUint::from(u32::MAX), 2.0.powi(32) - 1.0);
     check(&BigUint::from(1u64 << 32), 2.0.powi(32));
-    check(&BigUint::from_slice(&[0, 0, 1]), 2.0.powi(64));
+    check(&(BigUint::one() << 64), 2.0.powi(64));
     check(&((BigUint::one() << 100) + (BigUint::one() << 152)),
           2.0.powi(100) + 2.0.powi(152));
     check(&(BigUint::one() << 1023), 2.0.powi(1023));
@@ -678,8 +673,8 @@ fn test_convert_from_uint() {
 
     check!(u8, BigUint::from_slice(&[u8::MAX as BigDigit]));
     check!(u16, BigUint::from_slice(&[u16::MAX as BigDigit]));
-    check!(u32, BigUint::from_slice(&[u32::MAX]));
-    check!(u64, BigUint::from_slice(&[u32::MAX, u32::MAX]));
+    check!(u32, BigUint::from_slice(&[u32::MAX as BigDigit]));
+    check!(u64, (BigUint::one() << 64) - BigUint::one());
     check!(usize, BigUint::from(usize::MAX as u64));
 }
 
@@ -754,7 +749,7 @@ fn test_sub_fail_on_underflow() {
     a - b;
 }
 
-const M: u32 = ::std::u32::MAX;
+const M: BigDigit = big_digit::MAX;
 const MUL_TRIPLES: &'static [(&'static [BigDigit],
            &'static [BigDigit],
            &'static [BigDigit])] = &[(&[], &[], &[]),
